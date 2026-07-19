@@ -92,14 +92,12 @@ Optionally if you wish to convert the raw .tex files into PNG you can do it via 
 
 3. You can now view and export the .tex files via noesis.
 
-4. If you wish to batch convert all the .tex files to png you can make a ".bat" file and run:
-   ```
-@echo off
+4. If you wish to batch convert all the .tex files to png you can make a ".bat" file with the content below and run it:
+[@echo off
 set NOESIS=C:\[Your Noesis.exe]
 
 for /r "C:\[Your extracted Wii U .arcs folder]" %%f in (*.tex) do "%NOESIS%" ?cmode "%%f" "%%~dpnf.png"
-pause
-   ```
+pause]
 
 ---
 
