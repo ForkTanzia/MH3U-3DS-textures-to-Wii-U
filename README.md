@@ -118,7 +118,6 @@ in the fork's repository.
 ## Credits
 - **NGRP** HD texture project by **raccu** — the source art. Download it from its official page.
 - **Cemu** by the Cemu project (MPL-2.0).
-- Bridge/convert tooling by **[your name]**.
 
 ## License
 MIT (these scripts only). NGRP assets are **not** covered by this license and are **not**
