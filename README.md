@@ -119,6 +119,11 @@ in the fork's repository.
 - **NGRP** HD texture project by **raccu** — the source art. Download it from its official page.
 - **Cemu** by the Cemu project (MPL-2.0).
 
+## Support
+The fork and all tools are free to download and build. If it's been useful, you can
+optionally support my work:
+
+[![Support me on Ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/H8L623H70U)
 ## License
 MIT (these scripts only). NGRP assets are **not** covered by this license and are **not**
 included — they belong to raccu.
