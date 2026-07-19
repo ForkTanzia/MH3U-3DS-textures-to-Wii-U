@@ -64,12 +64,14 @@ def main():
     ap.add_argument("ngrp_pack"); ap.add_argument("out_load_dir")
     ap.add_argument("--texconv"); ap.add_argument("--no-flip", action="store_true")
     ap.add_argument("--rules", help="also write a rules.txt covering every replaced size/format")
+    ap.add_argument("--manifest", help="also write a portable manifest (Cemu hash + fmt + NGRP file) so end users can convert with only NGRP")
     ap.add_argument("--title-id", default="", help="16-hex MH3U title id for the rules [Definition]")
     a = ap.parse_args()
     pack = index_pack(a.ngrp_pack)
     os.makedirs(a.out_load_dir, exist_ok=True)
     made = skipped_fmt = skipped_src = fail = 0
     groups = {}
+    manifest_rows = []
     unknown_fmts = {}
     with open(a.report, newline="", encoding="utf-8") as f:
         for row in csv.DictReader(f):
@@ -88,6 +90,7 @@ def main():
             # filename uses the ORIGINAL Wii U size (mirrors Cemu's dump name).
             # The DDS *content* stays the upscaled NGRP size -- only the name field is original.
             out_name = "%s_%dx%d_fmt%04x_mip00.dds" % (ch, w, h, gx2)
+            manifest_rows.append([ch, w, h, "%04x" % gx2, tcf, os.path.basename(ngrp)])
             if not a.texconv:
                 made += 1
                 if made <= 8: print("  would build %-40s <- %s" % (out_name, row["match"]))
@@ -118,6 +121,11 @@ def main():
     if not a.texconv:
         print("  (dry run) add --texconv \"path\\texconv.exe\" to actually build the DDS")
 
+    if a.manifest:
+        with open(a.manifest, "w", newline="", encoding="utf-8") as f:
+            wr = csv.writer(f); wr.writerow(["cemu_hash","w","h","fmt","texconv_fmt","ngrp_file"])
+            wr.writerows(manifest_rows)
+        print("  wrote manifest (%d entries) -> %s" % (len(manifest_rows), a.manifest))
     if a.rules:
         out = ["[Definition]",
                "titleIds = " + (a.title_id or "<PUT_YOUR_16HEX_TITLE_ID_HERE>"),
