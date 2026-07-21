@@ -17,6 +17,7 @@ any MH3U 3DS Texture pack, this guide is targeted at NGRP by raccu.
 - **Python 3** — https://www.python.org/downloads/ (tick "Add Python to PATH" on install)
 - **texconv.exe** — https://github.com/microsoft/DirectXTex/releases (the texture converter)
 - **The NGRP pack** — https://www.raccu.com/releases/runtime/mh3u-3g (download the DDS texture pack)
+- **HD UI/Ultrawide UI** - https://gamebanana.com/mods/695684 (currently a work in progress, will be updated as I continue my work on it)
 - Python libraries: `pip install -r requirements.txt`
 
 Two ways to use this, depending on what you have.
