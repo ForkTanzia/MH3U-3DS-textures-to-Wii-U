@@ -115,6 +115,9 @@ its NGRP counterpart (via the shared internal name → 3DS CityHash that NGRP fi
 and transcode the NGRP art into Cemu's expected format and naming. Full technical write-up is
 in the fork's repository.
 
+## Video Demo featuring custom textures (Click)
+[![Custom Texture Demo](https://img.youtube.com/vi/nntnY9l1PAI/maxresdefault.jpg)](https://www.youtube.com/watch?v=nntnY9l1PAI)
+
 ## Credits
 - **NGRP** HD texture project by **raccu** — the source art. Download it from its official page.
 - **Cemu** by the Cemu project (MPL-2.0).
