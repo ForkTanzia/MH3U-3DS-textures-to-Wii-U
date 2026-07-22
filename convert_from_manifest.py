@@ -47,7 +47,7 @@ def main():
                 made += 1
                 if made <= 8: print("  would build %-42s <- %s" % (out_name, ngrp_file))
                 continue
-            cmd = [a.texconv, "-nologo", "-y", "-m", "0", "-f", tcf, "-o", a.out_load_dir]
+            cmd = [a.texconv, "-nologo", "-y", "-m", "0", "-sepalpha", "-f", tcf, "-o", a.out_load_dir]
             if not a.no_flip: cmd.insert(1, "-vflip")
             cmd.append(src)
             try:

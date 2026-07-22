@@ -96,7 +96,7 @@ def main():
                 if made <= 8: print("  would build %-40s <- %s" % (out_name, row["match"]))
                 continue
             # write texconv output straight into out_load_dir (same drive -> rename works)
-            cmd = [a.texconv, "-nologo", "-y", "-m", "0", "-f", tcf, "-o", a.out_load_dir]
+            cmd = [a.texconv, "-nologo", "-y", "-m", "0", "-sepalpha", "-f", tcf, "-o", a.out_load_dir]
             if not a.no_flip: cmd.insert(1, "-vflip")
             cmd.append(ngrp)
             try:
