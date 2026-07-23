@@ -10,11 +10,11 @@ Step 2 (this script) -- compute each Cemu hash and transcode the matched NGRP ar
     py cemu_names.py bridge_report.csv "S:\\MH3U Extract" "S:\\NGRP" "S:\\CemuLoad" ^
                      --texconv "C:\\tools\\texconv.exe"
 
-Writes  <cemuHash>_<w>x<h>_fmt<XXXX>_mip00.dds  into CemuLoad. Drop that into
+Writes  <contentHash16>_<w>x<h>_fmt<XXXX>_mip00.dds  into CemuLoad. Drop that into
 <Cemu>\\load\\textures\\ . Needs addrlib.py beside this file. Without --texconv it
 only prints what it *would* build (dry run).
 """
-import argparse, os, sys, csv, struct, subprocess, tempfile
+import argparse, os, sys, csv, struct, subprocess, tempfile, hashlib
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import addrlib
 
@@ -34,6 +34,28 @@ def cemu_hash(buf):
         hv = (hv + int(u64[idx])) & ((1 << 64) - 1); hv = _rotl64(hv, 3); idx += step
     return (hv & 0xFFFFFFFF) ^ (hv >> 32)
 
+def strong_hash(buf):
+    """Full-data content hash of the guest mip0 surface.
+
+    Must stay bit-identical to LatteTextureReplace::HashData() in the fork. Every byte
+    contributes, so distinct textures always get distinct keys -- unlike Cemu's texDataHash2,
+    which samples ~296 bytes and collides between e.g. monster subspecies.
+    """
+    import numpy as np
+    M = 0xFFFFFFFFFFFFFFFF
+    n = len(buf) // 8
+    h = 0
+    if n:
+        w = np.frombuffer(buf[:n * 8], dtype='<u8')
+        idx = np.arange(n, dtype=np.uint64)
+        with np.errstate(over='ignore'):
+            m = (w ^ (idx * np.uint64(0x9E3779B97F4A7C15))) * np.uint64(0xFF51AFD7ED558CCD)
+            m = m ^ (m >> np.uint64(29))
+        h = int(np.bitwise_xor.reduce(m))
+    for b in buf[n * 8:]:
+        h = ((h ^ b) * 0x100000001B3) & M
+    return h
+
 def wiiu_tex_info(tex):
     if tex[:4] != TEX_BE: return None
     x = struct.unpack(">I", tex[8:12])[0]
@@ -43,7 +65,9 @@ def wiiu_tex_info(tex):
     gx2, tcf = FMT[fmt]
     try: surf = addrlib.getSurfaceInfo(gx2, w, h, 1, 1, 4, 0, 0).surfSize
     except Exception: return None, fmt
-    return ("%08x" % cemu_hash(tex[16:16 + surf]), w, h, gx2, tcf), fmt
+    data = tex[16:16 + surf]
+    dup = hashlib.md5(data).hexdigest()          # identifies byte-identical duplicates
+    return ("%016x" % strong_hash(data), w, h, gx2, tcf, dup), fmt
 
 def dds_dims(path):
     try:
@@ -66,6 +90,9 @@ def main():
     ap.add_argument("--rules", help="also write a rules.txt covering every replaced size/format")
     ap.add_argument("--manifest", help="also write a portable manifest (Cemu hash + fmt + NGRP file) so end users can convert with only NGRP")
     ap.add_argument("--title-id", default="", help="16-hex MH3U title id for the rules [Definition]")
+    ap.add_argument("--allow-collisions", action="store_true",
+                    help="write colliding textures anyway (last one wins -- can show the WRONG texture)")
+    ap.add_argument("--collision-report", help="write a CSV listing every colliding hash and its sources")
     a = ap.parse_args()
     pack = index_pack(a.ngrp_pack)
     os.makedirs(a.out_load_dir, exist_ok=True)
@@ -73,18 +100,76 @@ def main():
     groups = {}
     manifest_rows = []
     unknown_fmts = {}
+    # ---- pass 1: scan EVERY Wii U texture in the report ------------------------------------
+    # Unreplaced textures matter too: if one shares a hash with a replaced texture, the
+    # replacement would be applied to it as well (wrong texture in game). So they take part
+    # in collision detection even though they are never converted.
+    entries = []
+    by_hash = {}   # cemu_hash -> {"strong": set(), "ngrp": set(), "tex": [wiiu paths]}
     with open(a.report, newline="", encoding="utf-8") as f:
         for row in csv.DictReader(f):
-            if row.get("status") != "matched": continue
+            matched = row.get("status") == "matched"
             wpath = os.path.join(a.wiiu_root, row["wiiu"])
             try: tex = open(wpath, "rb").read()
-            except OSError: skipped_src += 1; continue
+            except OSError:
+                if matched: skipped_src += 1
+                continue
             info, fmt = wiiu_tex_info(tex)
             if info is None:
-                unknown_fmts[fmt] = unknown_fmts.get(fmt, 0) + 1; skipped_fmt += 1; continue
-            ch, w, h, gx2, tcf = info
+                if matched:
+                    unknown_fmts[fmt] = unknown_fmts.get(fmt, 0) + 1; skipped_fmt += 1
+                continue
+            ch, w, h, gx2, tcf, strong = info
+            rec = by_hash.setdefault(ch, {"strong": set(), "ngrp": set(), "tex": []})
+            rec["strong"].add(strong); rec["tex"].append(row.get("wiiu", ""))
+            if not matched: continue
             ngrp = pack.get(row["match"]) or pack.get(os.path.basename(row.get("match", "")))
             if not ngrp: skipped_src += 1; continue
+            rec["ngrp"].add(os.path.basename(ngrp))
+            entries.append((ch, w, h, gx2, tcf, ngrp, row["match"], row.get("wiiu", "")))
+
+    # ---- ambiguity check -------------------------------------------------------------------
+    # The key is a full-data hash, so one key == one exact texture. Genuine ambiguity (two
+    # DIFFERENT textures sharing a key) is therefore effectively impossible -- but it is still
+    # checked, because writing the wrong texture is worse than leaving the original.
+    #
+    # What DOES happen: several byte-identical Wii U textures matching different NGRP files.
+    # That is one texture with several equally valid sources, not a conflict -- pick one.
+    collisions = {ch for ch, r in by_hash.items() if len(r["strong"]) > 1}
+    multi_src = sum(1 for r in by_hash.values() if len(r["ngrp"]) > 1)
+    dupes_ok = sum(1 for r in by_hash.values() if len(r["tex"]) > 1)
+    skipped_collision = 0
+    if multi_src:
+        print("  %d textures have several equally valid NGRP sources -- picking one per texture." % multi_src)
+    if dupes_ok:
+        print("  %d textures appear more than once in the game (byte-identical) -- converted once each." % dupes_ok)
+    if collisions:
+        print("  ! %d keys cover more than one DISTINCT texture -- %s."
+              % (len(collisions), "kept anyway (--allow-collisions)" if a.allow_collisions else "skipped, they stay vanilla"))
+    if a.collision_report:
+        with open(a.collision_report, "w", newline="", encoding="utf-8") as f:
+            wr = csv.writer(f); wr.writerow(["cemu_hash", "distinct_textures", "ngrp_files", "wiiu_texture"])
+            for ch in sorted(collisions):
+                r = by_hash[ch]
+                for pth in r["tex"]:
+                    wr.writerow([ch, len(r["strong"]), "|".join(sorted(r["ngrp"])), pth])
+        print("  wrote collision report -> %s" % a.collision_report)
+
+    # ---- pass 2: one conversion per distinct texture ---------------------------------------
+    # Convert each distinct texture exactly once. Where a texture has several candidate NGRP
+    # sources, pick deterministically (first by filename) so runs are reproducible.
+    chosen = {}
+    for e in entries:
+        ch = e[0]
+        if ch in collisions and not a.allow_collisions:
+            continue
+        prev = chosen.get(ch)
+        if prev is None or os.path.basename(e[5]) < os.path.basename(prev[5]):
+            chosen[ch] = e
+    skipped_collision = len(collisions) if not a.allow_collisions else 0
+    for ch, w, h, gx2, tcf, ngrp, match, wiiu in sorted(chosen.values(), key=lambda e: e[0]):
+            if False:
+                pass
             dw, dh = dds_dims(ngrp)
             g = groups.setdefault((w, h, gx2), {}); g[(dw, dh)] = g.get((dw, dh), 0) + 1
             # filename uses the ORIGINAL Wii U size (mirrors Cemu's dump name).
@@ -93,7 +178,7 @@ def main():
             manifest_rows.append([ch, w, h, "%04x" % gx2, tcf, os.path.basename(ngrp)])
             if not a.texconv:
                 made += 1
-                if made <= 8: print("  would build %-40s <- %s" % (out_name, row["match"]))
+                if made <= 8: print("  would build %-40s <- %s" % (out_name, match))
                 continue
             # write texconv output straight into out_load_dir (same drive -> rename works)
             cmd = [a.texconv, "-nologo", "-y", "-m", "0", "-sepalpha", "-f", tcf, "-o", a.out_load_dir]
@@ -111,10 +196,10 @@ def main():
                 made += 1
             except Exception as ex:
                 fail += 1
-                if fail <= 5: print("  texconv fail on %s: %s" % (row["match"], str(ex)[:80]))
-    print("\n%s: %d DDS %s, %d skipped(no src), %d skipped(unknown fmt), %d texconv fails"
+                if fail <= 5: print("  texconv fail on %s: %s" % (match, str(ex)[:80]))
+    print("\n%s: %d DDS %s, %d skipped(no src), %d skipped(unknown fmt), %d skipped(hash collision), %d texconv fails"
           % (a.out_load_dir, made, "written" if a.texconv else "would build",
-             skipped_src, skipped_fmt, fail))
+             skipped_src, skipped_fmt, skipped_collision, fail))
     if unknown_fmts:
         print("  unknown Wii U .tex formats (extend FMT map): " +
               ", ".join("fmt%d x%d" % (k, v) for k, v in unknown_fmts.items()))
